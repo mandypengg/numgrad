@@ -4,19 +4,126 @@ Layers hold parameter tensors and are callable on a ``Tensor``. A layer exposes
 its parameters so an optimizer can collect them; it does not own the update
 step.
 
-Planned: Module base, Linear, ReLU, Tanh, Sequential, He/Xavier initializers,
-mse_loss.
+Planned: Xavier initializer, mse_loss.
 
 Parameters are initialized as ``float64``. Losses are built from the ops in
 ``numgrad.ops`` so they are differentiated by the same machinery as everything
 else, rather than carrying hand-written gradients of their own.
 
-Implemented so far: softmax_cross_entropy.
+Implemented so far: Module, Linear, ReLU, Tanh, Sequential,
+softmax_cross_entropy.
 """
 
 import numpy as np
 
 from numgrad import ops
+from numgrad.tensor import Tensor
+
+
+class Module:
+    """Base class for anything callable that may hold parameters.
+
+    Subclasses implement ``forward`` and, if they own parameter tensors,
+    override ``parameters``. The base class deliberately does no bookkeeping of
+    its own: there is no registry that discovers parameters by inspecting
+    attributes, because a reader tracing which tensors an optimizer updates
+    should be able to read the answer off the ``parameters`` method rather than
+    off an attribute hook.
+    """
+
+    def parameters(self):
+        """The tensors an optimizer should update. Empty unless overridden."""
+        return []
+
+    def zero_grad(self):
+        """Clear the gradient of every parameter this module owns."""
+        for param in self.parameters():
+            param.zero_grad()
+
+    def forward(self, x):
+        raise NotImplementedError(f"{type(self).__name__} does not implement forward()")
+
+    def __call__(self, x):
+        return self.forward(x)
+
+
+class Linear(Module):
+    """An affine map ``x @ weight + bias``.
+
+    Parameters
+    ----------
+    fan_in:
+        Number of input features. Rows of ``weight``.
+    fan_out:
+        Number of output features. Columns of ``weight``.
+    rng:
+        Optional ``np.random.Generator``, so a test can fix the initialization.
+
+    Weights use He initialization: ``randn(fan_in, fan_out) * sqrt(2 / fan_in)``.
+    The scale is what keeps activations from shrinking or blowing up layer after
+    layer. A unit-variance input times a weight column of ``fan_in`` independent
+    entries of variance ``s**2`` gives a pre-activation of variance
+    ``fan_in * s**2``, and a ReLU then zeroes about half the distribution, which
+    halves that variance again. Setting ``s**2 = 2 / fan_in`` cancels both
+    factors and leaves the output at unit variance.
+
+    The bias starts at zeros. It has no fan-in to compensate for, and a nonzero
+    bias would only break the symmetry that the random weights have already
+    broken.
+    """
+
+    def __init__(self, fan_in, fan_out, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
+
+        scale = np.sqrt(2.0 / fan_in)
+        self.weight = Tensor(rng.standard_normal((fan_in, fan_out)) * scale)
+
+        # Shape (fan_out,) rather than (1, fan_out): it broadcasts across the
+        # batch either way, and the backward pass sums the broadcast axis away.
+        self.bias = Tensor(np.zeros(fan_out))
+
+    def parameters(self):
+        return [self.weight, self.bias]
+
+    def forward(self, x):
+        return ops.matmul(x, self.weight) + self.bias
+
+
+class ReLU(Module):
+    """Elementwise ``max(x, 0)``, with no parameters."""
+
+    def forward(self, x):
+        return ops.relu(x)
+
+
+class Tanh(Module):
+    """Elementwise hyperbolic tangent, with no parameters."""
+
+    def forward(self, x):
+        return ops.tanh(x)
+
+
+class Sequential(Module):
+    """Chain of modules, applied in the order given."""
+
+    def __init__(self, *layers):
+        self.layers = list(layers)
+
+    def parameters(self):
+        # Written as a loop rather than a comprehension over comprehensions, so
+        # the order is plainly the order the layers were given in. Optimizers
+        # rely on that order only for reporting, but a reader should not have to
+        # take it on faith.
+        params = []
+        for layer in self.layers:
+            params.extend(layer.parameters())
+        return params
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
 
 
 def softmax_cross_entropy(logits, labels):

@@ -9,7 +9,14 @@ As each piece lands, re-export it here and add it to ``__all__``.
 """
 
 from numgrad.gradcheck import check_grads
-from numgrad.nn import softmax_cross_entropy
+from numgrad.nn import (
+    Linear,
+    Module,
+    ReLU,
+    Sequential,
+    Tanh,
+    softmax_cross_entropy,
+)
 from numgrad.ops import (
     add,
     exp,
@@ -29,11 +36,19 @@ from numgrad.ops import (
     truediv,
     unbroadcast,
 )
+from numgrad.optim import SGD, Adam
 from numgrad.tensor import Tensor
 
 __version__ = "0.0.0"
 
 __all__: list[str] = [
+    "SGD",
+    "Adam",
+    "Linear",
+    "Module",
+    "ReLU",
+    "Sequential",
+    "Tanh",
     "Tensor",
     "add",
     "check_grads",

@@ -4,12 +4,26 @@ The losses here are composed from ops rather than carrying gradients of their
 own, so the gradient checks are checking the composition: that the graph a loss
 builds differentiates to the right thing, and that it stays numerically sound at
 logit magnitudes where the textbook formula does not.
+
+The same goes for the layers: a ``Linear`` has no backward pass of its own, so
+what the gradient checks here confirm is that stacking layers composes the ops'
+gradients correctly, in particular that the bias broadcast across the batch is
+undone on the way back.
 """
 
 import numpy as np
 import pytest
 
-from numgrad import Tensor, check_grads, softmax_cross_entropy
+from numgrad import (
+    Linear,
+    Module,
+    ReLU,
+    Sequential,
+    Tanh,
+    Tensor,
+    check_grads,
+    softmax_cross_entropy,
+)
 
 
 def reference_loss(logits, labels):
@@ -255,3 +269,263 @@ def test_wrong_shapes_are_rejected():
 
     with pytest.raises(ValueError, match="one label per row"):
         softmax_cross_entropy(logits, np.array([0, 1]))
+
+
+# Layers. A layer is a container for parameter tensors plus a forward pass built
+# from ops, so these tests cover three things: the shapes and values a layer
+# produces, the initialization it starts from, and whether gradients survive the
+# trip back through a stack of them.
+
+
+def test_linear_forward_is_the_affine_map():
+    rng = np.random.default_rng(60)
+    layer = Linear(4, 3, rng=rng)
+    x = Tensor(rng.standard_normal((6, 4)))
+
+    out = layer(x)
+
+    assert out.shape == (6, 3)
+    np.testing.assert_allclose(out.data, x.data @ layer.weight.data + layer.bias.data)
+
+
+def test_linear_bias_starts_at_zeros():
+    layer = Linear(4, 3, rng=np.random.default_rng(61))
+
+    np.testing.assert_array_equal(layer.bias.data, np.zeros(3))
+
+
+def test_he_initialization_has_the_right_scale():
+    """Weight entries have standard deviation sqrt(2 / fan_in).
+
+    Checked over a large fan_in so the sample standard deviation is close to the
+    population one. The tolerance is loose on purpose: this is asserting that
+    the scale is 2 / fan_in rather than 1 / fan_in or 2 / fan_out, all of which
+    would look identical on a small square layer.
+    """
+    fan_in = 4096
+    layer = Linear(fan_in, 64, rng=np.random.default_rng(62))
+
+    expected = np.sqrt(2.0 / fan_in)
+
+    assert layer.weight.shape == (fan_in, 64)
+    np.testing.assert_allclose(layer.weight.data.std(), expected, rtol=0.02)
+    np.testing.assert_allclose(layer.weight.data.mean(), 0.0, atol=0.01 * expected)
+
+
+def test_he_initialization_holds_activation_scale_across_layers():
+    """The property the scale exists for: a deep ReLU stack neither dies nor blows up.
+
+    Twenty layers is enough for the wrong constant to show. At 1 / fan_in the
+    activations would shrink by about sqrt(2) per layer, which over twenty
+    layers is a factor of a thousand.
+    """
+    rng = np.random.default_rng(63)
+    layers = []
+    for _ in range(20):
+        layers.append(Linear(128, 128, rng=rng))
+        layers.append(ReLU())
+    net = Sequential(*layers)
+
+    x = Tensor(rng.standard_normal((64, 128)))
+
+    out = net(x)
+
+    # Compared against the input's own scale, since the claim is preservation
+    # and not a particular absolute value.
+    ratio = out.data.std() / x.data.std()
+    assert 0.5 < ratio < 2.0
+
+
+def test_linear_parameters_are_the_weight_and_bias():
+    layer = Linear(4, 3, rng=np.random.default_rng(64))
+
+    params = layer.parameters()
+
+    assert len(params) == 2
+    assert params[0] is layer.weight
+    assert params[1] is layer.bias
+
+
+def test_activations_have_no_parameters():
+    assert ReLU().parameters() == []
+    assert Tanh().parameters() == []
+
+
+def test_relu_and_tanh_forward():
+    x = Tensor([[-2.0, 0.0, 3.0]])
+
+    np.testing.assert_allclose(ReLU()(x).data, [[0.0, 0.0, 3.0]])
+    np.testing.assert_allclose(Tanh()(x).data, np.tanh([[-2.0, 0.0, 3.0]]))
+
+
+def test_sequential_applies_layers_in_order():
+    rng = np.random.default_rng(65)
+    first = Linear(4, 5, rng=rng)
+    second = Linear(5, 3, rng=rng)
+    net = Sequential(first, Tanh(), second)
+
+    x = Tensor(rng.standard_normal((6, 4)))
+
+    expected = np.tanh(x.data @ first.weight.data + first.bias.data)
+    expected = expected @ second.weight.data + second.bias.data
+
+    np.testing.assert_allclose(net(x).data, expected)
+
+
+def test_sequential_collects_parameters_in_layer_order():
+    rng = np.random.default_rng(66)
+    first = Linear(4, 5, rng=rng)
+    second = Linear(5, 3, rng=rng)
+    net = Sequential(first, Tanh(), second, Tanh())
+
+    params = net.parameters()
+
+    expected = [first.weight, first.bias, second.weight, second.bias]
+
+    assert len(params) == len(expected)
+    for got, want in zip(params, expected):
+        assert got is want
+
+
+def test_zero_grad_clears_every_parameter():
+    """And clears in place, so a held reference to .grad sees the reset."""
+    rng = np.random.default_rng(67)
+    net = Sequential(Linear(4, 5, rng=rng), Tanh(), Linear(5, 3, rng=rng))
+    x = Tensor(rng.standard_normal((6, 4)))
+
+    net(x).sum().backward()
+
+    assert any(np.any(p.grad != 0.0) for p in net.parameters())
+
+    held = net.parameters()[0].grad
+    net.zero_grad()
+
+    for param in net.parameters():
+        np.testing.assert_array_equal(param.grad, np.zeros_like(param.data))
+    assert held is net.parameters()[0].grad
+
+
+def test_module_without_a_forward_says_so():
+    class Empty(Module):
+        pass
+
+    with pytest.raises(NotImplementedError, match="Empty"):
+        Empty()(Tensor([1.0]))
+
+
+def test_parameters_are_float64():
+    layer = Linear(4, 3, rng=np.random.default_rng(68))
+
+    assert layer.weight.data.dtype == np.float64
+    assert layer.bias.data.dtype == np.float64
+
+
+# Labels for the 4 -> 5 -> 3 net below. Three classes, so every label is < 3.
+NET_LABELS = np.array([0, 2, 1, 2, 0, 1])
+
+
+def build_net(seed):
+    """A 4 -> 5 -> 3 net with tanh activations, and a batch of 6 inputs."""
+    rng = np.random.default_rng(seed)
+    net = Sequential(Linear(4, 5, rng=rng), Tanh(), Linear(5, 3, rng=rng), Tanh())
+    x = Tensor(rng.standard_normal((6, 4)))
+    return net, x
+
+
+def test_gradcheck_a_tanh_net_end_to_end():
+    """Every weight and bias in the stack, against a finite difference.
+
+    ``check_grads`` perturbs the tensors it is handed, and those are the same
+    objects the layers hold, so the forward pass inside the closure sees each
+    perturbation. The closure takes the parameters positionally and ignores
+    them for that reason.
+    """
+    net, x = build_net(70)
+
+    check_grads(lambda *params: net(x).sum(), net.parameters())
+
+
+def test_gradcheck_a_tanh_net_through_the_loss():
+    """The same net with softmax cross entropy on top, which is the real graph."""
+    net, x = build_net(71)
+
+    check_grads(
+        lambda *params: softmax_cross_entropy(net(x), NET_LABELS), net.parameters()
+    )
+
+
+def test_gradcheck_flows_back_to_the_input():
+    """Gradients reach the input too, which is what makes stacking work at all."""
+    net, x = build_net(72)
+
+    check_grads(lambda inp: softmax_cross_entropy(net(inp), NET_LABELS), [x])
+
+
+def test_gradcheck_a_relu_net():
+    """Same shape, ReLU instead of tanh.
+
+    ReLU takes subgradient 0 at exactly 0 and a central difference straddling 0
+    disagrees with any choice made there, so the test asserts first that no
+    pre-activation sits within the step size of the kink. Without that check a
+    seed change could turn this into an intermittent failure that looks like a
+    bug in the backward pass.
+    """
+    rng = np.random.default_rng(73)
+    first = Linear(4, 5, rng=rng)
+    second = Linear(5, 3, rng=rng)
+    net = Sequential(first, ReLU(), second, ReLU())
+    x = Tensor(rng.standard_normal((6, 4)))
+
+    hidden = x.data @ first.weight.data + first.bias.data
+    output = np.maximum(hidden, 0.0) @ second.weight.data + second.bias.data
+
+    assert np.abs(hidden).min() > 1e-3
+    assert np.abs(output).min() > 1e-3
+
+    check_grads(
+        lambda *params: softmax_cross_entropy(net(x), NET_LABELS), net.parameters()
+    )
+
+
+def test_the_bias_gradient_sums_over_the_batch():
+    """One bias entry is used once per row, so its gradient is the column sum.
+
+    This is the broadcast being undone. A backward pass that returned the
+    gradient un-summed would have the wrong shape and fail loudly; one that
+    averaged instead of summing would have the right shape and be quietly wrong
+    by a factor of the batch size.
+    """
+    rng = np.random.default_rng(74)
+    layer = Linear(4, 3, rng=rng)
+    x = Tensor(rng.standard_normal((6, 4)))
+    weights = rng.standard_normal((6, 3))
+
+    (layer(x) * Tensor(weights)).sum().backward()
+
+    assert layer.bias.grad.shape == (3,)
+    np.testing.assert_allclose(layer.bias.grad, weights.sum(axis=0))
+
+
+def test_a_parameter_used_twice_accumulates_both_contributions():
+    """The same layer applied twice in one graph gets one contribution per use."""
+    rng = np.random.default_rng(75)
+    layer = Linear(3, 3, rng=rng)
+    x = Tensor(rng.standard_normal((5, 3)))
+
+    once = layer(x)
+    once.sum().backward()
+    single = layer.weight.grad.copy()
+
+    layer.zero_grad()
+    (layer(x) + layer(x)).sum().backward()
+
+    np.testing.assert_allclose(layer.weight.grad, 2.0 * single)
+
+
+def test_the_forward_pass_does_not_mutate_its_input():
+    net, x = build_net(76)
+    before = x.data.copy()
+
+    softmax_cross_entropy(net(x), NET_LABELS).backward()
+
+    np.testing.assert_array_equal(x.data, before)
