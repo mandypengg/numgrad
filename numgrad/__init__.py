@@ -8,6 +8,7 @@ This module is the public API surface. Tests and examples import from
 As each piece lands, re-export it here and add it to ``__all__``.
 """
 
+from numgrad.data import batches, load_mnist, one_hot, train_test_split
 from numgrad.gradcheck import check_grads
 from numgrad.nn import (
     Linear,
@@ -51,14 +52,17 @@ __all__: list[str] = [
     "Tanh",
     "Tensor",
     "add",
+    "batches",
     "check_grads",
     "exp",
     "getitem",
+    "load_mnist",
     "log",
     "matmul",
     "max",
     "mul",
     "neg",
+    "one_hot",
     "pow",
     "relu",
     "reshape",
@@ -66,6 +70,7 @@ __all__: list[str] = [
     "sub",
     "sum",
     "tanh",
+    "train_test_split",
     "transpose",
     "truediv",
     "unbroadcast",
