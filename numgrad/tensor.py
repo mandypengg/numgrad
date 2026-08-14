@@ -80,6 +80,12 @@ class Tensor:
 
         return ops.reshape(self, shape)
 
+    def relu(self):
+        """Elementwise max(self, 0), as a tracked op so gradients flow through it."""
+        from numgrad import ops
+
+        return ops.relu(self)
+
     def zero_grad(self):
         """Reset this tensor's gradient to zeros, in place.
 

@@ -39,6 +39,7 @@ from numgrad.ops import (
 )
 from numgrad.optim import SGD, Adam
 from numgrad.tensor import Tensor
+from numgrad.viz import draw_graph
 
 __version__ = "0.0.0"
 
@@ -54,6 +55,7 @@ __all__: list[str] = [
     "add",
     "batches",
     "check_grads",
+    "draw_graph",
     "exp",
     "getitem",
     "load_mnist",

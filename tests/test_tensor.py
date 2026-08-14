@@ -9,7 +9,7 @@ import sys
 import numpy as np
 import pytest
 
-from numgrad import Tensor
+from numgrad import Tensor, ops
 
 
 def test_data_is_float64():
@@ -46,6 +46,26 @@ def test_transpose_is_tracked():
     out.backward()
 
     np.testing.assert_array_equal(x.grad, np.ones((2, 2)))
+
+
+def test_relu_method_is_the_op():
+    """The method is a spelling of ops.relu, not a second implementation."""
+    x = Tensor([[-2.0, 0.0, 3.0]])
+
+    out = x.relu()
+
+    assert out._op == "relu"
+    np.testing.assert_array_equal(out.data, ops.relu(x).data)
+
+
+def test_relu_method_is_tracked():
+    x = Tensor([-2.0, 3.0])
+
+    x.relu().backward()
+
+    # Gradient passes where the input was positive and is stopped where it was
+    # not, which is the op's rule and not the method's.
+    np.testing.assert_array_equal(x.grad, [0.0, 1.0])
 
 
 def test_repr_shows_shape_and_op():
