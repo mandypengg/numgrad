@@ -9,7 +9,25 @@ As each piece lands, re-export it here and add it to ``__all__``.
 """
 
 from numgrad.gradcheck import check_grads
-from numgrad.ops import add, matmul, mul, transpose
+from numgrad.ops import (
+    add,
+    exp,
+    getitem,
+    log,
+    matmul,
+    max,
+    mul,
+    neg,
+    pow,
+    relu,
+    reshape,
+    sub,
+    sum,
+    tanh,
+    transpose,
+    truediv,
+    unbroadcast,
+)
 from numgrad.tensor import Tensor
 
 __version__ = "0.0.0"
@@ -18,7 +36,20 @@ __all__: list[str] = [
     "Tensor",
     "add",
     "check_grads",
+    "exp",
+    "getitem",
+    "log",
     "matmul",
+    "max",
     "mul",
+    "neg",
+    "pow",
+    "relu",
+    "reshape",
+    "sub",
+    "sum",
+    "tanh",
     "transpose",
+    "truediv",
+    "unbroadcast",
 ]

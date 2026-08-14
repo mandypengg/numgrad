@@ -62,6 +62,24 @@ class Tensor:
 
         return ops.transpose(self)
 
+    def sum(self, axis=None, keepdims=False):
+        """Sum, as a tracked op so gradients flow through it."""
+        from numgrad import ops
+
+        return ops.sum(self, axis=axis, keepdims=keepdims)
+
+    def max(self, axis=None, keepdims=False):
+        """Maximum, as a tracked op so gradients flow through it."""
+        from numgrad import ops
+
+        return ops.max(self, axis=axis, keepdims=keepdims)
+
+    def reshape(self, shape):
+        """Reshape, as a tracked op so gradients flow through it."""
+        from numgrad import ops
+
+        return ops.reshape(self, shape)
+
     def zero_grad(self):
         """Reset this tensor's gradient to zeros, in place.
 
@@ -120,6 +138,21 @@ class Tensor:
 
         return ops.add(other, self)
 
+    def __sub__(self, other):
+        from numgrad import ops
+
+        return ops.sub(self, other)
+
+    def __rsub__(self, other):
+        from numgrad import ops
+
+        return ops.sub(other, self)
+
+    def __neg__(self):
+        from numgrad import ops
+
+        return ops.neg(self)
+
     def __mul__(self, other):
         from numgrad import ops
 
@@ -129,6 +162,26 @@ class Tensor:
         from numgrad import ops
 
         return ops.mul(other, self)
+
+    def __truediv__(self, other):
+        from numgrad import ops
+
+        return ops.truediv(self, other)
+
+    def __rtruediv__(self, other):
+        from numgrad import ops
+
+        return ops.truediv(other, self)
+
+    def __pow__(self, exponent):
+        from numgrad import ops
+
+        return ops.pow(self, exponent)
+
+    def __getitem__(self, index):
+        from numgrad import ops
+
+        return ops.getitem(self, index)
 
     def __matmul__(self, other):
         from numgrad import ops

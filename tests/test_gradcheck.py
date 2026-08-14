@@ -13,7 +13,17 @@ transpose, and a gradient that is off by a small factor rather than a large one.
 import numpy as np
 import pytest
 
-from numgrad import Tensor, check_grads
+from numgrad import Tensor, check_grads, exp, log, relu, tanh
+
+
+def away_from_zero(values, margin=0.5):
+    """Push samples out of a band around 0, keeping their signs.
+
+    For ops whose derivative is undefined or unstable at 0. Shifting rather than
+    resampling keeps the inputs deterministic for a given seed.
+    """
+    signs = np.where(values >= 0.0, 1.0, -1.0)
+    return signs * (np.abs(values) + margin)
 
 
 def test_gradcheck_add():
@@ -65,6 +75,240 @@ def test_gradcheck_transpose():
 
     # Multiplied by a second input so the transpose is not the whole graph.
     check_grads(lambda x, y: (x * y).T, [a, b])
+
+
+def test_gradcheck_sub():
+    rng = np.random.default_rng(12)
+    a = Tensor(rng.standard_normal((4, 3)))
+    b = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x, y: x - y, [a, b])
+
+
+def test_gradcheck_sub_broadcast():
+    rng = np.random.default_rng(13)
+    a = Tensor(rng.standard_normal((4, 3)))
+    b = Tensor(rng.standard_normal((3,)))
+
+    # Subtraction is the op where a sign error hides best, so check it on the
+    # subtrahend side too, where the broadcast and the minus sign compose.
+    check_grads(lambda x, y: x - y, [a, b])
+    check_grads(lambda x, y: y - x, [a, b])
+
+
+def test_gradcheck_neg():
+    rng = np.random.default_rng(14)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: -x, [a])
+
+
+def test_gradcheck_truediv():
+    rng = np.random.default_rng(15)
+    a = Tensor(rng.standard_normal((4, 3)))
+    # Denominator held away from zero: 1/b and a/b**2 both blow up near it, and
+    # a finite difference across a near-singularity is meaningless.
+    b = Tensor(away_from_zero(rng.standard_normal((4, 3))))
+
+    check_grads(lambda x, y: x / y, [a, b])
+
+
+def test_gradcheck_truediv_broadcast():
+    rng = np.random.default_rng(16)
+    a = Tensor(rng.standard_normal((4, 3)))
+    b = Tensor(away_from_zero(rng.standard_normal((4, 1))))
+
+    check_grads(lambda x, y: x / y, [a, b])
+
+
+def test_gradcheck_pow_integer_exponent():
+    rng = np.random.default_rng(17)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x**3, [a])
+
+
+def test_gradcheck_pow_fractional_exponent():
+    rng = np.random.default_rng(18)
+    # Positive base: a fractional power of a negative number is not real.
+    a = Tensor(np.abs(rng.standard_normal((4, 3))) + 0.5)
+
+    check_grads(lambda x: x**0.5, [a])
+
+
+def test_gradcheck_exp():
+    rng = np.random.default_rng(19)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(exp, [a])
+
+
+def test_gradcheck_log():
+    rng = np.random.default_rng(20)
+    # Positive and away from zero, where log and its derivative both diverge.
+    a = Tensor(np.abs(rng.standard_normal((4, 3))) + 0.5)
+
+    check_grads(log, [a])
+
+
+def test_gradcheck_relu():
+    """relu is not differentiable at 0, so no input is seeded near it.
+
+    The backward pass takes the subgradient 0 at exactly 0, while a central
+    difference straddling 0 measures 1/2, and one straddling a point within h of
+    0 measures something in between. Neither disagreement is a bug in the
+    backward pass, so the inputs are pushed out of a band around 0 rather than
+    the tolerance being loosened to hide it.
+    """
+    rng = np.random.default_rng(21)
+    a = Tensor(away_from_zero(rng.standard_normal((4, 3))))
+
+    # No entry is anywhere near the kink, so the check is measuring the two
+    # linear pieces and nothing else.
+    assert np.all(np.abs(a.data) > 0.1)
+
+    check_grads(relu, [a])
+
+
+def test_gradcheck_tanh():
+    rng = np.random.default_rng(22)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(tanh, [a])
+
+
+def test_gradcheck_sum_all():
+    rng = np.random.default_rng(23)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x.sum(), [a])
+
+
+@pytest.mark.parametrize("axis", [0, 1, -1])
+@pytest.mark.parametrize("keepdims", [False, True])
+def test_gradcheck_sum_axis(axis, keepdims):
+    rng = np.random.default_rng(24)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x.sum(axis=axis, keepdims=keepdims), [a])
+
+
+def test_gradcheck_max_all():
+    rng = np.random.default_rng(25)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x.max(), [a])
+
+
+@pytest.mark.parametrize("axis", [0, 1, -1])
+@pytest.mark.parametrize("keepdims", [False, True])
+def test_gradcheck_max_axis(axis, keepdims):
+    rng = np.random.default_rng(26)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x.max(axis=axis, keepdims=keepdims), [a])
+
+
+@pytest.mark.parametrize("keepdims", [False, True])
+def test_gradcheck_reduce_over_several_axes(keepdims):
+    """A tuple axis reduces more than one axis at once.
+
+    Worth its own check because the backward pass reinserts the reduced axes
+    with a single expand_dims call, and it has to put back all of them.
+    """
+    rng = np.random.default_rng(35)
+    a = Tensor(rng.standard_normal((3, 4, 2)))
+
+    check_grads(lambda x: x.sum(axis=(0, 2), keepdims=keepdims), [a])
+    check_grads(lambda x: x.max(axis=(0, 2), keepdims=keepdims), [a])
+
+
+def test_gradcheck_reshape():
+    rng = np.random.default_rng(27)
+    a = Tensor(rng.standard_normal((4, 3)))
+    b = Tensor(rng.standard_normal((4, 3)))
+
+    # Multiplied first so the reshape is not the whole graph.
+    check_grads(lambda x, y: (x * y).reshape((2, 6)), [a, b])
+
+
+def test_gradcheck_getitem():
+    rng = np.random.default_rng(28)
+    a = Tensor(rng.standard_normal((4, 3)))
+
+    check_grads(lambda x: x[1:3], [a])
+
+
+def test_gradcheck_getitem_repeats_an_index():
+    """Row 0 is selected twice, so its gradient must be the sum of both uses."""
+    rng = np.random.default_rng(29)
+    a = Tensor(rng.standard_normal((4, 3)))
+    rows = np.array([0, 0, 2])
+
+    check_grads(lambda x: x[rows], [a])
+
+
+def test_gradcheck_getitem_by_label():
+    """The indexing pattern cross-entropy needs: one logit per row."""
+    rng = np.random.default_rng(30)
+    logits = Tensor(rng.standard_normal((8, 4)))
+    labels = np.array([0, 3, 1, 1, 2, 0, 3, 2])
+    rows = np.arange(logits.shape[0])
+
+    check_grads(lambda x: x[rows, labels], [logits])
+
+
+# Broadcasting checks at the shapes a batch of logits actually produces. These
+# are the three cases unbroadcast has to get right: a bias row added to a batch,
+# a per-row scale, and two operands that both stretch.
+
+
+def test_gradcheck_broadcast_batch_plus_bias():
+    """(32, 10) + (10,): b gains a leading axis, which is summed away."""
+    rng = np.random.default_rng(31)
+    a = Tensor(rng.standard_normal((32, 10)))
+    b = Tensor(rng.standard_normal((10,)))
+
+    check_grads(lambda x, y: x + y, [a, b])
+
+
+def test_gradcheck_broadcast_batch_times_column():
+    """(32, 10) * (32, 1): b's second axis is stretched, then summed back to 1."""
+    rng = np.random.default_rng(32)
+    a = Tensor(rng.standard_normal((32, 10)))
+    b = Tensor(rng.standard_normal((32, 1)))
+
+    check_grads(lambda x, y: x * y, [a, b])
+
+
+def test_gradcheck_broadcast_row_plus_column():
+    """(1, 10) + (32, 1): both operands stretch, on different axes.
+
+    The output is (32, 10) and neither input has that shape, so a backward pass
+    that reduced only one side, or reduced the wrong axis, still produces a
+    conformable array and has to be caught numerically.
+    """
+    rng = np.random.default_rng(33)
+    a = Tensor(rng.standard_normal((1, 10)))
+    b = Tensor(rng.standard_normal((32, 1)))
+
+    check_grads(lambda x, y: x + y, [a, b])
+
+
+def test_gradcheck_broadcast_through_a_nonlinearity():
+    """The same stretch, with tanh on top so the gradient is not constant.
+
+    Gradients of a bare sum are all ones, which hides an unbroadcast that sums
+    the right number of entries from the wrong axis. tanh rather than relu here
+    because relu's kink at 0 would need the inputs seeded away from it, and the
+    point of this test is the broadcast, not the nonlinearity.
+    """
+    rng = np.random.default_rng(34)
+    a = Tensor(rng.standard_normal((1, 10)))
+    b = Tensor(rng.standard_normal((32, 1)))
+
+    check_grads(lambda x, y: tanh(x + y), [a, b])
+    check_grads(lambda x, y: tanh(x * y), [a, b])
 
 
 def test_gradcheck_diamond():
