@@ -9,6 +9,7 @@ As each piece lands, re-export it here and add it to ``__all__``.
 """
 
 from numgrad.gradcheck import check_grads
+from numgrad.nn import softmax_cross_entropy
 from numgrad.ops import (
     add,
     exp,
@@ -46,6 +47,7 @@ __all__: list[str] = [
     "pow",
     "relu",
     "reshape",
+    "softmax_cross_entropy",
     "sub",
     "sum",
     "tanh",
