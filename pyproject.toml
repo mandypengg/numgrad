@@ -29,3 +29,9 @@ include = ["numgrad*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Run everything locally; CI runs `pytest -m "not slow"`. The only slow test is
+# the end-to-end MNIST one, which downloads the dataset on a cold cache.
+markers = [
+    "slow: needs the real MNIST dataset, so it downloads on a cold cache",
+]
