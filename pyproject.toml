@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "numgrad"
+version = "0.0.0"
+description = "Reverse-mode automatic differentiation from scratch in pure NumPy"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Mandy Peng" }]
+
+# NumPy is the only runtime dependency, and that is a hard constraint of this
+# project. See CLAUDE.md before adding anything here.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+# scikit-learn is present solely to fetch MNIST via fetch_openml.
+# matplotlib is for examples/ only.
+dev = [
+    "pytest>=7.0",
+    "scikit-learn>=1.3",
+    "matplotlib>=3.7",
+]
+
+[tool.setuptools.packages.find]
+include = ["numgrad*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
