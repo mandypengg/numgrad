@@ -22,6 +22,7 @@ from numgrad import (
     Tanh,
     Tensor,
     check_grads,
+    no_grad,
     softmax_cross_entropy,
 )
 
@@ -529,3 +530,50 @@ def test_the_forward_pass_does_not_mutate_its_input():
     softmax_cross_entropy(net(x), NET_LABELS).backward()
 
     np.testing.assert_array_equal(x.data, before)
+
+
+# no_grad and detach through a whole model, which is where they get used.
+
+
+def test_no_grad_gives_a_model_the_same_predictions():
+    """Evaluation is a forward pass, and no_grad changes nothing about it."""
+    net, x = build_net(77)
+
+    recorded = net(x)
+    with no_grad():
+        skipped = net(x)
+
+    np.testing.assert_array_equal(recorded.data, skipped.data)
+
+
+def test_no_grad_leaves_every_parameter_gradient_at_zero():
+    net, x = build_net(78)
+
+    with no_grad():
+        loss = softmax_cross_entropy(net(x), NET_LABELS)
+
+    loss.backward()
+
+    for param in net.parameters():
+        np.testing.assert_array_equal(param.grad, np.zeros_like(param.data))
+
+
+def test_no_grad_builds_no_tape_for_a_whole_net():
+    """What the block actually saves: the intermediate nodes are never linked."""
+    net, x = build_net(79)
+
+    with no_grad():
+        out = net(x)
+
+    assert out._prev == set()
+
+
+def test_a_detached_input_gets_no_gradient_but_the_weights_still_do():
+    """The usual reason to detach: stop at the input, keep training the layer."""
+    net, x = build_net(80)
+
+    softmax_cross_entropy(net(x.detach()), NET_LABELS).backward()
+
+    np.testing.assert_array_equal(x.grad, np.zeros_like(x.data))
+    for param in net.parameters():
+        assert np.any(param.grad != 0.0)

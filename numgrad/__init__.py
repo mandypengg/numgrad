@@ -38,7 +38,7 @@ from numgrad.ops import (
     unbroadcast,
 )
 from numgrad.optim import SGD, Adam
-from numgrad.tensor import Tensor
+from numgrad.tensor import Tensor, no_grad
 from numgrad.viz import draw_graph
 
 __version__ = "0.0.0"
@@ -64,6 +64,7 @@ __all__: list[str] = [
     "max",
     "mul",
     "neg",
+    "no_grad",
     "one_hot",
     "pow",
     "relu",

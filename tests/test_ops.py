@@ -98,7 +98,8 @@ def test_relu_takes_the_zero_subgradient_at_zero():
     """
     x = Tensor([-1.0, 0.0, 1.0])
 
-    relu(x).backward()
+    out = relu(x)
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_allclose(x.grad, [0.0, 0.0, 1.0])
 
@@ -126,7 +127,8 @@ def test_reductions_shapes():
 def test_max_sends_the_gradient_to_the_winner_only():
     x = Tensor([[1.0, 5.0, 2.0], [9.0, 0.0, 3.0]])
 
-    x.max(axis=1).backward()
+    out = x.max(axis=1)
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_allclose(x.grad, [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
 
@@ -156,7 +158,8 @@ def test_getitem_accumulates_a_repeated_index():
     """
     x = Tensor([[1.0, 2.0], [3.0, 4.0]])
 
-    x[np.array([0, 0, 1])].backward()
+    out = x[np.array([0, 0, 1])]
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_allclose(x.grad, [[2.0, 2.0], [1.0, 1.0]])
 
@@ -175,7 +178,7 @@ def test_ops_do_not_mutate_their_inputs():
     before_y = y.data.copy()
 
     out = tanh(x / y - relu(x) * 2.0)
-    out.backward()
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_array_equal(x.data, before_x)
     np.testing.assert_array_equal(y.data, before_y)

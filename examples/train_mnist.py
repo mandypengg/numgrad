@@ -42,6 +42,7 @@ from numgrad import (  # noqa: E402
     Tensor,
     batches,
     load_mnist,
+    no_grad,
     softmax_cross_entropy,
 )
 
@@ -62,9 +63,8 @@ MOMENTUM = 0.9
 # normalized to roughly lr per step regardless of the gradient's size.
 DEFAULT_LR = {"sgd": 0.1, "adam": 1e-3}
 
-# Rows per forward pass at evaluation time. Nothing here needs a gradient, but
-# the graph is still built, so the whole 10k test set at once would hold every
-# intermediate activation alive at the same time.
+# Rows per forward pass at evaluation time. Under no_grad no tape is built, so
+# this only has to bound the activations of a single forward pass.
 EVAL_BATCH_SIZE = 1000
 
 
@@ -154,14 +154,19 @@ def accuracy(model, images, labels):
     Read off ``logits.data`` directly. Softmax is monotone, so the arg max of
     the probabilities is the arg max of the logits and there is no reason to
     form the probabilities at all.
+
+    The whole pass runs under ``no_grad``. Nothing here calls ``backward()``, so
+    recording the tape would build a graph over the entire test set only to drop
+    it. The predictions are identical either way.
     """
     correct = 0
 
-    for batch_images, batch_labels in batches(
-        images, labels, EVAL_BATCH_SIZE, shuffle=False
-    ):
-        logits = model(Tensor(batch_images))
-        correct += int(np.sum(logits.data.argmax(axis=1) == batch_labels))
+    with no_grad():
+        for batch_images, batch_labels in batches(
+            images, labels, EVAL_BATCH_SIZE, shuffle=False
+        ):
+            logits = model(Tensor(batch_images))
+            correct += int(np.sum(logits.data.argmax(axis=1) == batch_labels))
 
     return correct / labels.shape[0]
 

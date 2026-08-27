@@ -12,8 +12,8 @@ why the library is float64 throughout: at float32 the roundoff in the numerator
 would swamp the signal.
 
 The loss being differentiated is ``f(*params).data.sum()``. Summing gives one
-well-defined scalar to difference, and it is the same quantity ``backward()``
-computes gradients of, since ``backward()`` seeds the output with ones.
+well-defined scalar to difference, and the analytic side matches it by seeding
+``backward()`` with ones, which is exactly the seed that differentiates a sum.
 
 Agreement is measured as a relative error::
 
@@ -66,7 +66,10 @@ def check_grads(f, params, h=1e-5, tol=1e-6):
     # A composite graph reports its last op; leaves report nothing.
     op_name = out._op or "<leaf>"
 
-    out.backward()
+    # Seeded with ones rather than left to the default, because f's output is
+    # usually not a scalar and ones is what makes the analytic gradient the
+    # gradient of out.sum(), the same quantity the numeric side differences.
+    out.backward(np.ones_like(out.data))
 
     # Copied because the numeric pass below leaves each param's .grad in place,
     # and a caller's later use of it should not see values captured mid-check.

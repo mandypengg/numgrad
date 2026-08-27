@@ -349,7 +349,7 @@ def test_diamond_accumulates_from_both_paths():
     w = Tensor(rng.standard_normal((4, 3)))
 
     out = (x * w) + (x + w)
-    out.backward()
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_allclose(x.grad, w.data + 1.0)
     np.testing.assert_allclose(w.grad, x.data + 1.0)
@@ -360,9 +360,82 @@ def test_tensor_used_twice_in_one_expression():
     x = Tensor([3.0, -1.0])
 
     out = x + x
-    out.backward()
+    out.backward(np.ones_like(out.data))
 
     np.testing.assert_allclose(x.grad, [2.0, 2.0])
+
+
+def test_gradcheck_vector_jacobian_product():
+    """A seed of v gives v @ J, the gradient of the scalar ``sum(v * f(x))``.
+
+    Differenced against that scalar directly rather than through
+    ``check_grads``, which always seeds with ones and so only ever measures the
+    gradient of a plain sum.
+    """
+    rng = np.random.default_rng(11)
+    x = Tensor(rng.standard_normal((3, 4)))
+    v = rng.standard_normal((3, 4))
+
+    out = tanh(x)
+    out.backward(v)
+
+    h = 1e-5
+    numeric = np.zeros_like(x.data)
+    for index in np.ndindex(x.data.shape):
+        original = x.data[index]
+
+        x.data[index] = original + h
+        plus = float(np.sum(v * np.tanh(x.data)))
+
+        x.data[index] = original - h
+        minus = float(np.sum(v * np.tanh(x.data)))
+
+        x.data[index] = original
+        numeric[index] = (plus - minus) / (2.0 * h)
+
+    np.testing.assert_allclose(x.grad, numeric, rtol=1e-6)
+
+
+def test_gradcheck_a_seed_of_ones_is_the_gradient_of_the_sum():
+    """The default question, asked explicitly, is the one check_grads asks."""
+    rng = np.random.default_rng(12)
+    x = Tensor(rng.standard_normal((3, 4)))
+
+    out = exp(x)
+    out.backward(np.ones_like(out.data))
+
+    # d(sum(exp(x)))/dx is exp(x) elementwise.
+    np.testing.assert_allclose(x.grad, np.exp(x.data))
+
+
+def test_a_one_hot_seed_extracts_one_row_of_the_jacobian():
+    """Seeding with a single 1 asks for the gradient of that one output entry.
+
+    Run once per output entry, this is how reverse mode builds a full Jacobian,
+    and it is why the seed is a parameter rather than always ones.
+    """
+    rng = np.random.default_rng(13)
+    x = Tensor(rng.standard_normal((2, 3)))
+    w = Tensor(rng.standard_normal((3, 4)))
+
+    jacobian_rows = []
+    for index in np.ndindex((2, 4)):
+        x.zero_grad()
+        w.zero_grad()
+
+        seed = np.zeros((2, 4))
+        seed[index] = 1.0
+
+        (x @ w).backward(seed)
+        jacobian_rows.append(x.grad.copy())
+
+    # For out = x @ w, d out[i, j] / d x[i, :] is w[:, j], and every other row
+    # of x is untouched.
+    for position, index in enumerate(np.ndindex((2, 4))):
+        row, column = index
+        expected = np.zeros((2, 3))
+        expected[row] = w.data[:, column]
+        np.testing.assert_allclose(jacobian_rows[position], expected)
 
 
 # Deliberately broken ops. Each one computes the correct forward value, so the
@@ -545,7 +618,8 @@ def test_stale_gradients_are_cleared_first():
     b = Tensor([[5.0, 6.0], [7.0, 8.0]])
 
     # Leaves a.grad and b.grad at ones before the check begins.
-    (a + b).backward()
+    seeded = a + b
+    seeded.backward(np.ones_like(seeded.data))
     np.testing.assert_array_equal(a.grad, np.ones((2, 2)))
 
     check_grads(lambda x, y: x + y, [a, b])

@@ -20,10 +20,10 @@ abstraction between what you read and what runs. No PyTorch, no JAX, no
 autograd, not even to check the answers: the gradients are checked against
 finite differences of the library's own forward pass.
 
-The ~500 lines are executable statements: 443 of them are the autodiff itself,
+The ~500 lines are executable statements: 478 of them are the autodiff itself,
 meaning the tape, the ops, the layers, the optimizers, and the gradient checker.
 The rest of the package is MNIST loading and the drawing above. Counting the
-comments and docstrings it comes to about 1,400 lines, and that difference is
+comments and docstrings it comes to about 1,500 lines, and that difference is
 the explanation of why each backward pass has the form it does, which is the
 part worth reading.
 
@@ -62,6 +62,35 @@ for _ in range(100):
 
 print(float(loss.data))                              # 1.8283 at the first step, 0.1303 here
 ```
+
+## Seeds, `no_grad`, and `detach`
+
+`backward()` seeds the reverse walk with the gradient of whatever you are
+differentiating with respect to the output. That defaults to 1.0, which only
+means something for a single number, so anything larger has to say what it
+wants:
+
+```python
+loss.backward()                       # a scalar: seed 1.0, the usual case
+y.backward(np.ones_like(y.data))      # differentiate y.sum()
+y.backward(v)                         # the vector-Jacobian product v @ J
+```
+
+Calling `backward()` on a non-scalar with no seed raises instead of quietly
+summing, because summing is a guess at a question with more than one answer.
+Seeding with a one-hot `v` pulls out a single row of the Jacobian, which is how
+reverse mode builds a whole one, a row per pass.
+
+Evaluation needs no tape at all, and `no_grad` stops building one:
+
+```python
+with no_grad():
+    logits = model(x_test)            # same values, no graph behind them
+```
+
+`detach()` cuts one tensor loose rather than a whole block. It returns a leaf
+holding a copy of the values, so a backward pass that reaches it stops there
+while the rest of the graph still gets its gradients.
 
 ## MNIST
 
@@ -139,8 +168,8 @@ that breaks one turns the suite red.
 ## Tests
 
 ```bash
-pytest                  # 176 tests
-pytest -k gradcheck     # 61: the gradient checks, and the tests of the checker
+pytest                  # 202 tests
+pytest -k gradcheck     # 64: the gradient checks, and the tests of the checker
 pytest -m "not slow"    # skips the one test that downloads MNIST
 ```
 
